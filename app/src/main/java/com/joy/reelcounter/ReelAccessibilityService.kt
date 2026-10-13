@@ -68,11 +68,11 @@ class ReelAccessibilityService : AccessibilityService() {
     }
 
     private fun isVerticalScroll(event: AccessibilityEvent): Boolean {
-        return if (android.os.Build.VERSION.SDK_INT >= 28) {
-            event.scrollDeltaY != 0 || event.scrollY != 0
-        } else {
-            event.scrollY > 0 || event.fromIndex >= 0 || event.toIndex >= 0
-        }
+        // Some paged video feeds (including versions of Facebook Lite) report
+        // changed item indices but leave scrollDeltaY/scrollY at zero.
+        return event.scrollDeltaY != 0 ||
+            event.scrollY != 0 ||
+            (event.fromIndex >= 0 && event.toIndex >= 0 && event.fromIndex != event.toIndex)
     }
 
     /**
