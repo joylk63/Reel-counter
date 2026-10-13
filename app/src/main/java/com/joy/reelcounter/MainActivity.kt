@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun countKey(date: LocalDate, platform: String) =
+internal fun countKey(date: LocalDate, platform: String) =
     "count_${date}_${platform.lowercase(Locale.ROOT).replace(" ", "_")}"
 
 @Composable
