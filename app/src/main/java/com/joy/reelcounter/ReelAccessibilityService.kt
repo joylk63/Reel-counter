@@ -5,35 +5,30 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
 import java.time.LocalDate
 import java.util.Locale
 
 /**
- * Best-effort counter using accessibility scroll events.
- *
- * Instagram and Facebook Lite do not expose a supported API that identifies
- * every Reel transition. This service deliberately counts only distinct
- * vertical scroll events and debounces duplicate events. It cannot guarantee
- * an exact Reel count on every app version.
+ * Best-effort Reel counter.
+ * A platform does not expose a stable public Reel-transition API, so UI checks
+ * are heuristic. The bubble is persistent after first creation to avoid flicker.
  */
 class ReelAccessibilityService : AccessibilityService() {
     private var windowManager: WindowManager? = null
     private var bubble: TextView? = null
-    private var bubbleParams: WindowManager.LayoutParams? = null
     private var currentPlatform: String? = null
-    private var lastCountAt = 0L
-    private var lastScrollY = Int.MIN_VALUE
-    private var lastFromIndex = Int.MIN_VALUE
-    private var lastToIndex = Int.MIN_VALUE
-    private var lastCountedSignature = ""
-    private var lastCountedAt = 0L
+    private var bubblePlatform: String? = null
+    private var gestureSawQualifiedVerticalScroll = false
+    private var lastCountedGestureAt = 0L
     private var lastRenderedLabel = ""
+    private var lastRootSignature = ""
+    private var lastRootSignatureAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -43,72 +38,95 @@ class ReelAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
         val pkg = event.packageName?.toString()
+        val platform = platformForPackage(pkg)
 
-        // Only remove the bubble on a real window transition away from the
-        // target app. Content events from system UI can otherwise cause flicker.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val platformForWindow = platformForPackage(pkg)
-            if (platformForWindow == null) {
-                currentPlatform = null
-                removeBubble()
-                return
+            if (platform != null) {
+                currentPlatform = platform
+                ensureBubble()
+                renderCount(platform)
+            }
+            // Do not remove the overlay for transient/null/system window events.
+            // This was the main source of the visible disappear/reappear flicker.
+            return
+        }
+
+        if (platform == null) return
+        currentPlatform = platform
+        ensureBubble()
+        renderCount(platform)
+
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_TOUCH_INTERACTION_START -> {
+                gestureSawQualifiedVerticalScroll = false
+            }
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                val vertical = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    event.scrollDeltaY != 0 || event.scrollY != 0
+                } else {
+                    event.scrollY >= 0
+                }
+                if (vertical && isLikelyReelsScreen()) {
+                    gestureSawQualifiedVerticalScroll = true
+                }
+            }
+            AccessibilityEvent.TYPE_TOUCH_INTERACTION_END -> {
+                if (gestureSawQualifiedVerticalScroll && isLikelyReelsScreen()) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    // Ignore only near-simultaneous duplicate end events, not fast swipes.
+                    if (now - lastCountedGestureAt > 180L) {
+                        increment(platform)
+                        lastCountedGestureAt = now
+                    }
+                }
+                gestureSawQualifiedVerticalScroll = false
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // Keep bubble persistent; content changes only refresh the displayed count.
+                renderCount(platform)
             }
         }
+    }
 
-        val platform = platformForPackage(pkg) ?: return
-        if (!Settings.canDrawOverlays(this)) {
-            removeBubble()
-            return
+    /**
+     * Conservative UI heuristic: require a Reels-labelled surface and common
+     * video action controls. Ordinary Home-feed scrolling should not qualify
+     * merely because it emitted TYPE_VIEW_SCROLLED.
+     */
+    private fun isLikelyReelsScreen(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val labels = ArrayList<String>(80)
+        collectLabels(root, labels, 0)
+        val normalized = labels.map { it.lowercase(Locale.ROOT).trim() }.filter { it.isNotBlank() }
+        val hasReelsLabel = normalized.any {
+            it == "reels" || it == "reel" || it.contains("reels video") || it.contains("reel video")
         }
-
-        if (currentPlatform != platform) {
-            currentPlatform = platform
-            lastScrollY = Int.MIN_VALUE
-            lastFromIndex = Int.MIN_VALUE
-            lastToIndex = Int.MIN_VALUE
-            lastCountedSignature = ""
-            lastCountedAt = 0L
-            ensureBubble(platform)
-            renderCount(platform)
-        } else {
-            ensureBubble(platform)
+        val hasVideoActions = normalized.any { it == "like" || it.contains("like button") } &&
+            normalized.any { it == "comment" || it.contains("comment button") } &&
+            normalized.any { it == "share" || it.contains("share button") }
+        val signature = normalized.filter {
+            it == "reels" || it == "reel" || it == "like" || it == "comment" || it == "share"
+        }.joinToString("|")
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (signature != lastRootSignature || now - lastRootSignatureAt > 1000L) {
+            lastRootSignature = signature
+            lastRootSignatureAt = now
         }
+        return hasReelsLabel && hasVideoActions
+    }
 
-        if (event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) return
-
-        // Ignore horizontal-only and non-scroll events. On API 28+, use
-        // scroll delta where available to reduce false positives.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            if (event.scrollDeltaY == 0 && event.scrollY == lastScrollY) return
+    private fun collectLabels(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
+        if (depth > 12 || out.size > 250) return
+        node.text?.toString()?.let { out.add(it) }
+        node.contentDescription?.toString()?.let { out.add(it) }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectLabels(child, out, depth + 1)
+            child.recycle()
         }
-        val from = event.fromIndex
-        val to = event.toIndex
-        val signature = "${event.className}:${event.scrollY}:${from}:${to}"
-        val now = System.currentTimeMillis()
+    }
 
-        // Suppress repeated accessibility notifications from the same swipe.
-        if (signature == lastCountedSignature && now - lastCountedAt < 1800L) return
-        if (now - lastCountAt < 1200L) {
-            lastScrollY = event.scrollY
-            lastFromIndex = from
-            lastToIndex = to
-            return
-        }
-
-        // If the event exposes list indices, require the index to advance.
-        val hasIndices = from >= 0 && to >= 0
-        if (hasIndices && from == lastFromIndex && to == lastToIndex) {
-            lastScrollY = event.scrollY
-            return
-        }
-
-        lastCountAt = now
-        lastCountedAt = now
-        lastCountedSignature = signature
-        lastScrollY = event.scrollY
-        lastFromIndex = from
-        lastToIndex = to
-
+    private fun increment(platform: String) {
         val key = countKey(LocalDate.now(), platform)
         val prefs = getSharedPreferences("reel_counter", MODE_PRIVATE)
         prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()
@@ -121,45 +139,40 @@ class ReelAccessibilityService : AccessibilityService() {
         else -> null
     }
 
-    private fun ensureBubble(platform: String) {
-        if (!Settings.canDrawOverlays(this)) return
+    private fun ensureBubble() {
+        if (!Settings.canDrawOverlays(this) || bubble != null) return
         val wm = windowManager ?: return
-        var view = bubble
-        if (view == null) {
-            view = TextView(this).apply {
-                setTextColor(Color.WHITE)
-                textSize = 13f
-                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-                setPadding(dp(13), dp(9), dp(13), dp(9))
-                background = GradientDrawable().apply {
-                    setColor(0xE6171717.toInt())
-                    cornerRadius = dp(28).toFloat()
-                    setStroke(dp(1), 0xFFD7FF3F.toInt())
-                }
-                elevation = dp(8).toFloat()
-                contentDescription = "Reel Counter floating count"
+        val view = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            setPadding(dp(13), dp(9), dp(13), dp(9))
+            background = GradientDrawable().apply {
+                setColor(0xE6171717.toInt())
+                cornerRadius = dp(28).toFloat()
+                setStroke(dp(1), 0xFFD7FF3F.toInt())
             }
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.END
-                x = dp(12)
-                y = dp(105)
-            }
-            try {
-                wm.addView(view, params)
-                bubble = view
-                bubbleParams = params
-            } catch (_: Exception) {
-                bubble = null
-                bubbleParams = null
-            }
+            elevation = dp(8).toFloat()
+            contentDescription = "Reel Counter floating count"
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(12)
+            y = dp(105)
+        }
+        try {
+            wm.addView(view, params)
+            bubble = view
+        } catch (_: Exception) {
+            bubble = null
         }
     }
 
@@ -168,10 +181,10 @@ class ReelAccessibilityService : AccessibilityService() {
         val count = getSharedPreferences("reel_counter", MODE_PRIVATE)
             .getInt(countKey(LocalDate.now(), platform), 0)
         val label = if (platform == "Instagram") "IG • $count" else "FB • $count"
-        // Updating the text only when the value changes avoids relayout flicker.
         if (label != lastRenderedLabel) {
             view.text = label
             lastRenderedLabel = label
+            bubblePlatform = platform
         }
     }
 
@@ -181,13 +194,14 @@ class ReelAccessibilityService : AccessibilityService() {
             if (view.parent != null) windowManager?.removeView(view)
         } catch (_: Exception) { }
         bubble = null
-        bubbleParams = null
         lastRenderedLabel = ""
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    override fun onInterrupt() { removeBubble() }
+    override fun onInterrupt() {
+        // Keep the overlay if possible; interruption should not cause flicker.
+    }
 
     override fun onDestroy() {
         removeBubble()
