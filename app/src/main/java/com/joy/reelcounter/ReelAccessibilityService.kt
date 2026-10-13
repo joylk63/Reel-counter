@@ -15,20 +15,15 @@ import java.time.LocalDate
 import java.util.Locale
 
 /**
- * Best-effort Reel counter.
- * A platform does not expose a stable public Reel-transition API, so UI checks
- * are heuristic. The bubble is persistent after first creation to avoid flicker.
+ * Best-effort Reel counter. Instagram and Facebook Lite do not expose a public
+ * API for Reel transitions, so detection depends on accessibility UI labels.
  */
 class ReelAccessibilityService : AccessibilityService() {
     private var windowManager: WindowManager? = null
     private var bubble: TextView? = null
     private var currentPlatform: String? = null
-    private var bubblePlatform: String? = null
-    private var gestureSawQualifiedVerticalScroll = false
-    private var lastCountedGestureAt = 0L
+    private var lastCountedScrollAt = 0L
     private var lastRenderedLabel = ""
-    private var lastRootSignature = ""
-    private var lastRootSignatureAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -40,94 +35,70 @@ class ReelAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString()
         val platform = platformForPackage(pkg)
 
-        if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START) {
-            gestureSawQualifiedVerticalScroll = false
-            return
-        }
-
-        if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END) {
-            val activePlatform = currentPlatform
-            if (gestureSawQualifiedVerticalScroll && activePlatform != null) {
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastCountedGestureAt > 350L) {
-                    increment(activePlatform)
-                    lastCountedGestureAt = now
-                }
-            }
-            gestureSawQualifiedVerticalScroll = false
-            return
-        }
-
+        // Only show the floating counter while Instagram or Facebook Lite is foreground.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (platform != null) {
                 currentPlatform = platform
                 ensureBubble()
                 renderCount(platform)
-            } else if (pkg != null && pkg != "android") {
-                // Keep the overlay attached across transient windows and app
-                // dialogs. It is removed only when the service itself stops.
+            } else if (pkg != null && pkg != packageName && pkg != "android") {
                 currentPlatform = null
+                removeBubble()
             }
             return
         }
 
+        // Touch interaction boundary events are not reliable across all app versions.
+        // Count on a qualifying vertical scroll instead.
         if (platform == null) return
         currentPlatform = platform
         ensureBubble()
         renderCount(platform)
 
-        when (event.eventType) {
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                val vertical = if (android.os.Build.VERSION.SDK_INT >= 28) {
-                    event.scrollDeltaY != 0 || event.scrollY != 0
-                } else {
-                    event.scrollY >= 0
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && isVerticalScroll(event)) {
+            if (isLikelyReelsScreen()) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                // Avoid duplicate accessibility scroll events for one swipe.
+                if (now - lastCountedScrollAt >= 650L) {
+                    increment(platform)
+                    lastCountedScrollAt = now
                 }
-                if (vertical) {
-                    // Count at gesture end only if the active UI looks like a
-                    // short-video surface; the heuristic is intentionally
-                    // broader because labels differ between app versions.
-                    if (isLikelyReelsScreen()) gestureSawQualifiedVerticalScroll = true
-                }
-            }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Keep bubble persistent; content changes only refresh the displayed count.
-                renderCount(platform)
             }
         }
     }
 
+    private fun isVerticalScroll(event: AccessibilityEvent): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= 28) {
+            event.scrollDeltaY != 0 || event.scrollY != 0
+        } else {
+            event.scrollY > 0 || event.fromIndex >= 0 || event.toIndex >= 0
+        }
+    }
+
     /**
-     * Conservative UI heuristic: require a Reels-labelled surface and common
-     * video action controls. Ordinary Home-feed scrolling should not qualify
-     * merely because it emitted TYPE_VIEW_SCROLLED.
+     * Accessibility labels vary by app version/localization. Accept common
+     * Reel/video indicators plus the usual action controls, instead of requiring
+     * the exact word "Reels" which is often absent from the accessibility tree.
      */
     private fun isLikelyReelsScreen(): Boolean {
         val root = rootInActiveWindow ?: return false
         val labels = ArrayList<String>(80)
         collectLabels(root, labels, 0)
         val normalized = labels.map { it.lowercase(Locale.ROOT).trim() }.filter { it.isNotBlank() }
-        val hasReelsLabel = normalized.any {
-            it == "reels" || it == "reel" || it.contains("reels video") ||
-                it.contains("reel video") || it.contains("video player") ||
-                it.contains("short video") || it.contains("reel,")
+
+        val hasLike = normalized.any { it == "like" || it.contains("like button") || it.contains("like reel") }
+        val hasComment = normalized.any { it == "comment" || it.contains("comment button") || it.contains("comment on") }
+        val hasShare = normalized.any { it == "share" || it.contains("share button") || it.contains("share reel") }
+        val hasVideoContext = normalized.any {
+            it.contains("reel") || it.contains("original audio") || it.contains("use audio") ||
+                it.contains("audio") || it.contains("remix") || it.contains("short video") ||
+                it.contains("video player") || it.contains("music")
         }
-        val hasVideoActions = normalized.any { it == "like" || it.contains("like button") || it.contains("like reel") } &&
-            normalized.any { it == "comment" || it.contains("comment button") || it.contains("comment on") } &&
-            normalized.any { it == "share" || it.contains("share button") || it.contains("share reel") }
-        val signature = normalized.filter {
-            it == "reels" || it == "reel" || it == "like" || it == "comment" || it == "share"
-        }.joinToString("|")
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (signature != lastRootSignature || now - lastRootSignatureAt > 1000L) {
-            lastRootSignature = signature
-            lastRootSignatureAt = now
-        }
-        return hasReelsLabel && hasVideoActions
+        return hasLike && hasComment && hasShare && hasVideoContext
     }
 
     private fun collectLabels(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
-        if (depth > 12 || out.size > 250) return
+        if (depth > 14 || out.size > 350) return
         node.text?.toString()?.let { out.add(it) }
         node.contentDescription?.toString()?.let { out.add(it) }
         for (i in 0 until node.childCount) {
@@ -195,7 +166,6 @@ class ReelAccessibilityService : AccessibilityService() {
         if (label != lastRenderedLabel) {
             view.text = label
             lastRenderedLabel = label
-            bubblePlatform = platform
         }
     }
 
@@ -210,9 +180,7 @@ class ReelAccessibilityService : AccessibilityService() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    override fun onInterrupt() {
-        // Keep the overlay if possible; interruption should not cause flicker.
-    }
+    override fun onInterrupt() = Unit
 
     override fun onDestroy() {
         removeBubble()
