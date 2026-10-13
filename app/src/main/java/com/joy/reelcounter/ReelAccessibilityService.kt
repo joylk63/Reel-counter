@@ -56,7 +56,7 @@ class ReelAccessibilityService : AccessibilityService() {
         renderCount(platform)
 
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && isVerticalScroll(event)) {
-            if (isLikelyReelsScreen()) {
+            if (isLikelyReelsScreen(platform)) {
                 val now = android.os.SystemClock.elapsedRealtime()
                 // Avoid duplicate accessibility scroll events for one swipe.
                 if (now - lastCountedScrollAt >= 650L) {
@@ -80,7 +80,7 @@ class ReelAccessibilityService : AccessibilityService() {
      * Reel/video indicators plus the usual action controls, instead of requiring
      * the exact word "Reels" which is often absent from the accessibility tree.
      */
-    private fun isLikelyReelsScreen(): Boolean {
+    private fun isLikelyReelsScreen(platform: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val labels = ArrayList<String>(80)
         collectLabels(root, labels, 0)
