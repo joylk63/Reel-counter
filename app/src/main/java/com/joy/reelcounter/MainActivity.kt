@@ -4,6 +4,9 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -43,6 +46,14 @@ private val Accent = Color(0xFFD7FF3F)
 private val platforms = listOf("Instagram", "Facebook Lite")
 
 class MainActivity : ComponentActivity() {
+    var resumeTick by mutableIntStateOf(0)
+        private set
+
+    override fun onResume() {
+        super.onResume()
+        resumeTick++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -65,6 +76,14 @@ private fun ReelCounterApp(context: Context) {
     var tab by remember { mutableStateOf("TODAY") }
     var selectedPlatform by remember { mutableStateOf("Instagram") }
     var showSettings by remember { mutableStateOf(false) }
+    var showPermissionSetup by remember { mutableStateOf(true) }
+    val resumeTick = (context as? MainActivity)?.resumeTick ?: 0
+    val overlayGranted = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(context)
+    val notificationGranted = Build.VERSION.SDK_INT < 33 ||
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    val accessibilityEnabled = Settings.Secure.getString(
+        context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    )?.contains(context.packageName + "/.ReelAccessibilityService", ignoreCase = true) == true
     var targetText by remember { mutableStateOf(prefs.getInt("target", 30).toString()) }
     var limitText by remember { mutableStateOf(prefs.getInt("limit", 50).toString()) }
     val today = LocalDate.now()
@@ -270,6 +289,38 @@ private fun ReelCounterApp(context: Context) {
                     color = Color(0xFF666666), fontSize = 9.sp, letterSpacing = 2.sp, textAlign = TextAlign.Center)
             }
         }
+    }
+
+
+    LaunchedEffect(resumeTick) {
+        if (overlayGranted && notificationGranted && accessibilityEnabled) showPermissionSetup = false
+    }
+
+    if (showPermissionSetup && (!overlayGranted || !notificationGranted || !accessibilityEnabled)) {
+        AlertDialog(
+            onDismissRequest = { showPermissionSetup = false },
+            containerColor = Panel,
+            title = { Text("PERMISSIONS SETUP", fontWeight = FontWeight.Black) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Enable these permissions for the floating counter, automatic scroll detection and limit alerts.", color = Muted, fontSize = 12.sp)
+                    Text((if (overlayGranted) "✓ " else "○ ") + "Display over other apps", color = if (overlayGranted) Accent else White)
+                    if (!overlayGranted) TextButton(onClick = {
+                        if (Build.VERSION.SDK_INT >= 23) context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + context.packageName)))
+                    }) { Text("GRANT OVERLAY PERMISSION", color = Accent) }
+                    Text((if (accessibilityEnabled) "✓ " else "○ ") + "Accessibility auto counter", color = if (accessibilityEnabled) Accent else White)
+                    if (!accessibilityEnabled) TextButton(onClick = {
+                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }) { Text("ENABLE AUTO COUNTER", color = Accent) }
+                    Text((if (notificationGranted) "✓ " else "○ ") + "Notifications for usage alerts", color = if (notificationGranted) Accent else White)
+                    if (!notificationGranted) TextButton(onClick = {
+                        if (Build.VERSION.SDK_INT >= 33) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }) { Text("ALLOW NOTIFICATIONS", color = Accent) }
+                    Text("Android requires you to confirm overlay and Accessibility access in Settings.", color = Muted, fontSize = 11.sp)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showPermissionSetup = false }) { Text("NOT NOW", color = White) } }
+        )
     }
 
     if (showSettings) {
