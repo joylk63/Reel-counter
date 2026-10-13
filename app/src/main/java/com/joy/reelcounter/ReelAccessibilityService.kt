@@ -48,29 +48,34 @@ class ReelAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Touch interaction boundary events are not reliable across all app versions.
-        // Count on a qualifying vertical scroll instead.
-        if (platform == null) return
-        currentPlatform = platform
+        // Touch interaction boundary events may have no packageName; use the
+        // foreground platform tracked by TYPE_WINDOW_STATE_CHANGED in that case.
+        val activePlatform = platform ?: if (
+            event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END
+        ) currentPlatform else null
+        if (activePlatform == null) return
+
+        currentPlatform = activePlatform
         ensureBubble()
-        renderCount(platform)
+        renderCount(activePlatform)
 
         val now = android.os.SystemClock.elapsedRealtime()
-        if (platform == "Facebook Lite") {
+        if (activePlatform == "Facebook Lite") {
             // Lite's full-screen Reel pager may not emit TYPE_VIEW_SCROLLED.
             // Count at touch end, but only when its Reel viewer signature is present.
             if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END &&
                 isFacebookLiteReelsViewer()) {
                 if (now - lastCountedScrollAt >= 900L) {
-                    increment(platform)
+                    increment(activePlatform)
                     lastCountedScrollAt = now
                 }
             }
-        } else if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
-            isVerticalScroll(event) && isLikelyReelsScreen(platform)) {
+        } else if (activePlatform == "Instagram" &&
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+            isVerticalScroll(event) && isLikelyReelsScreen(activePlatform)) {
             // Keep Instagram's existing behavior unchanged.
             if (now - lastCountedScrollAt >= 650L) {
-                increment(platform)
+                increment(activePlatform)
                 lastCountedScrollAt = now
             }
         }
