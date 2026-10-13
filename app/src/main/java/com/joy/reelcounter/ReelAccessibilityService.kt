@@ -61,14 +61,16 @@ class ReelAccessibilityService : AccessibilityService() {
 
         val now = android.os.SystemClock.elapsedRealtime()
         if (activePlatform == "Facebook Lite") {
-            // Lite's full-screen Reel pager may not emit TYPE_VIEW_SCROLLED.
-            // Count at touch end, but only when its Reel viewer signature is present.
-            if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END &&
-                isFacebookLiteReelsViewer()) {
-                if (now - lastCountedScrollAt >= 900L) {
-                    increment(activePlatform)
-                    lastCountedScrollAt = now
-                }
+            // Facebook Lite may expose Reel changes as content updates rather than
+            // scroll events. On its viewer screen, accept either signal.
+            val fbViewer = isFacebookLiteReelsViewer()
+            val fbSwipeSignal =
+                (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END) ||
+                (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && isVerticalScroll(event)) ||
+                (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            if (fbViewer && fbSwipeSignal && now - lastCountedScrollAt >= 900L) {
+                increment(activePlatform)
+                lastCountedScrollAt = now
             }
         } else if (activePlatform == "Instagram" &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
