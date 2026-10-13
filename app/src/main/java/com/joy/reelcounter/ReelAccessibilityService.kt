@@ -55,14 +55,23 @@ class ReelAccessibilityService : AccessibilityService() {
         ensureBubble()
         renderCount(platform)
 
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && isVerticalScroll(event)) {
-            if (isLikelyReelsScreen(platform)) {
-                val now = android.os.SystemClock.elapsedRealtime()
-                // Avoid duplicate accessibility scroll events for one swipe.
-                if (now - lastCountedScrollAt >= 650L) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (platform == "Facebook Lite") {
+            // Lite's full-screen Reel pager may not emit TYPE_VIEW_SCROLLED.
+            // Count at touch end, but only when its Reel viewer signature is present.
+            if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END &&
+                isFacebookLiteReelsViewer()) {
+                if (now - lastCountedScrollAt >= 900L) {
                     increment(platform)
                     lastCountedScrollAt = now
                 }
+            }
+        } else if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+            isVerticalScroll(event) && isLikelyReelsScreen(platform)) {
+            // Keep Instagram's existing behavior unchanged.
+            if (now - lastCountedScrollAt >= 650L) {
+                increment(platform)
+                lastCountedScrollAt = now
             }
         }
     }
@@ -107,6 +116,25 @@ class ReelAccessibilityService : AccessibilityService() {
             // Facebook Lite: don't count ordinary Home feed posts.
             hasLike && hasComment && hasShare && hasExplicitVideoContext
         }
+    }
+
+    private fun isFacebookLiteReelsViewer(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val labels = ArrayList<String>(80)
+        collectLabels(root, labels, 0)
+        val normalized = labels.map { it.lowercase(Locale.ROOT).trim() }.filter { it.isNotBlank() }
+
+        val hasLike = normalized.any { it == "like" || it.contains("like button") || it.contains("like reel") }
+        val hasComment = normalized.any { it == "comment" || it.contains("comment button") || it.contains("comment on") }
+        val hasShare = normalized.any { it == "share" || it.contains("share button") || it.contains("share reel") }
+        val hasViewerControl = normalized.any {
+            it.contains("full-screen") || it.contains("fullscreen") ||
+                it.contains("original audio") || it.contains("use audio") ||
+                it.contains("reel") || it.contains("video player")
+        }
+        // Unlike Home feed posts, the Lite Reel viewer shown in testing exposes
+        // a Full-screen control. Require that viewer-specific marker as well as actions.
+        return hasLike && hasComment && hasShare && hasViewerControl
     }
 
     private fun collectLabels(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
