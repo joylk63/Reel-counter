@@ -93,9 +93,7 @@ class ReelAccessibilityService : AccessibilityService() {
         }.also { bubble = it }
 
         text.text = if (platform == "Instagram") "IG  •  $count" else "FB  •  $count"
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        val type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
