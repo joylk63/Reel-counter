@@ -40,14 +40,35 @@ class ReelAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString()
         val platform = platformForPackage(pkg)
 
+        if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START) {
+            gestureSawQualifiedVerticalScroll = false
+            return
+        }
+
+        if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END) {
+            val activePlatform = currentPlatform
+            if (gestureSawQualifiedVerticalScroll && activePlatform != null && isLikelyReelsScreen()) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastCountedGestureAt > 180L) {
+                    increment(activePlatform)
+                    lastCountedGestureAt = now
+                }
+            }
+            gestureSawQualifiedVerticalScroll = false
+            return
+        }
+
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (platform != null) {
                 currentPlatform = platform
                 ensureBubble()
                 renderCount(platform)
+            } else if (pkg != null) {
+                // Hide only on a confirmed transition to another app. Ignore
+                // null-package/transient window events to avoid flicker.
+                currentPlatform = null
+                removeBubble()
             }
-            // Do not remove the overlay for transient/null/system window events.
-            // This was the main source of the visible disappear/reappear flicker.
             return
         }
 
@@ -57,9 +78,6 @@ class ReelAccessibilityService : AccessibilityService() {
         renderCount(platform)
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_TOUCH_INTERACTION_START -> {
-                gestureSawQualifiedVerticalScroll = false
-            }
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 val vertical = if (android.os.Build.VERSION.SDK_INT >= 28) {
                     event.scrollDeltaY != 0 || event.scrollY != 0
@@ -69,17 +87,6 @@ class ReelAccessibilityService : AccessibilityService() {
                 if (vertical && isLikelyReelsScreen()) {
                     gestureSawQualifiedVerticalScroll = true
                 }
-            }
-            AccessibilityEvent.TYPE_TOUCH_INTERACTION_END -> {
-                if (gestureSawQualifiedVerticalScroll && isLikelyReelsScreen()) {
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    // Ignore only near-simultaneous duplicate end events, not fast swipes.
-                    if (now - lastCountedGestureAt > 180L) {
-                        increment(platform)
-                        lastCountedGestureAt = now
-                    }
-                }
-                gestureSawQualifiedVerticalScroll = false
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 // Keep bubble persistent; content changes only refresh the displayed count.
