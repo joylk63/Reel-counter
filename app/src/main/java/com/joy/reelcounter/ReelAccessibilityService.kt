@@ -47,9 +47,9 @@ class ReelAccessibilityService : AccessibilityService() {
 
         if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END) {
             val activePlatform = currentPlatform
-            if (gestureSawQualifiedVerticalScroll && activePlatform != null && isLikelyReelsScreen()) {
+            if (gestureSawQualifiedVerticalScroll && activePlatform != null) {
                 val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastCountedGestureAt > 180L) {
+                if (now - lastCountedGestureAt > 350L) {
                     increment(activePlatform)
                     lastCountedGestureAt = now
                 }
@@ -63,11 +63,10 @@ class ReelAccessibilityService : AccessibilityService() {
                 currentPlatform = platform
                 ensureBubble()
                 renderCount(platform)
-            } else if (pkg != null) {
-                // Hide only on a confirmed transition to another app. Ignore
-                // null-package/transient window events to avoid flicker.
+            } else if (pkg != null && pkg != "android") {
+                // Keep the overlay attached across transient windows and app
+                // dialogs. It is removed only when the service itself stops.
                 currentPlatform = null
-                removeBubble()
             }
             return
         }
@@ -84,8 +83,11 @@ class ReelAccessibilityService : AccessibilityService() {
                 } else {
                     event.scrollY >= 0
                 }
-                if (vertical && isLikelyReelsScreen()) {
-                    gestureSawQualifiedVerticalScroll = true
+                if (vertical) {
+                    // Count at gesture end only if the active UI looks like a
+                    // short-video surface; the heuristic is intentionally
+                    // broader because labels differ between app versions.
+                    if (isLikelyReelsScreen()) gestureSawQualifiedVerticalScroll = true
                 }
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -106,11 +108,13 @@ class ReelAccessibilityService : AccessibilityService() {
         collectLabels(root, labels, 0)
         val normalized = labels.map { it.lowercase(Locale.ROOT).trim() }.filter { it.isNotBlank() }
         val hasReelsLabel = normalized.any {
-            it == "reels" || it == "reel" || it.contains("reels video") || it.contains("reel video")
+            it == "reels" || it == "reel" || it.contains("reels video") ||
+                it.contains("reel video") || it.contains("video player") ||
+                it.contains("short video") || it.contains("reel,")
         }
-        val hasVideoActions = normalized.any { it == "like" || it.contains("like button") } &&
-            normalized.any { it == "comment" || it.contains("comment button") } &&
-            normalized.any { it == "share" || it.contains("share button") }
+        val hasVideoActions = normalized.any { it == "like" || it.contains("like button") || it.contains("like reel") } &&
+            normalized.any { it == "comment" || it.contains("comment button") || it.contains("comment on") } &&
+            normalized.any { it == "share" || it.contains("share button") || it.contains("share reel") }
         val signature = normalized.filter {
             it == "reels" || it == "reel" || it == "like" || it == "comment" || it == "share"
         }.joinToString("|")
