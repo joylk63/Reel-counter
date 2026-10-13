@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Reel Counter</string>
+    <string name="accessibility_description">Counts vertical scrolling events in Instagram and Facebook Lite and displays a small floating counter. It does not capture or transmit screen contents.</string>
+</resources>
