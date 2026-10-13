@@ -1,31 +1,33 @@
 # Reel Counter — Android (Nothing OS inspired)
 
-A small Android app to manually track short-form videos/Reels watched in **Instagram** and **Facebook Lite**.
+A local-first Android app that tracks scrolling activity in Instagram and Facebook Lite and shows a small floating count bubble.
 
 ## Features
-- Separate daily counters for Instagram and Facebook Lite
-- Manual +1 and undo (−1)
-- Daily target and usage-limit alert
-- Last 30 days of local history
-- 7-day weekly report and daily average
+- Separate counters for Instagram and Facebook Lite
+- Approximate automatic counting from vertical accessibility scroll events
+- Small floating overlay near the top of the screen while either target app is foregrounded
+- Manual +1 / −1 correction in the main app
+- Daily target, per-platform limit alert, 30-day history and 7-day report
 - Nothing OS-inspired monochrome UI with lime accent
-- Local-only storage; no account login or network permission
+- No account login and no network permission
 
-## Build the APK
-1. Download or clone this repository.
-2. Open the repository folder in Android Studio.
-3. Use JDK 17 and install Android SDK Platform 35 if prompted.
-4. Let Gradle Sync finish.
-5. Connect an Android phone with USB debugging enabled, or use an emulator; click **Run**.
-6. To generate an APK, select **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
-7. Select **Locate** in the build notification, then transfer the APK to your phone and install it. Allow installation from that file manager when Android asks.
+## Build APK
+1. Open this repository in Android Studio.
+2. Use JDK 17 and install Android SDK Platform 35 if prompted.
+3. Let Gradle sync complete and select **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
+4. Install the resulting `app-debug.apk` on your Android phone.
 
-## Important behavior
-This is a manual counter. Open the app after watching a Reel and tap the matching platform's **+1** button. It does not automatically read either app's private data, detect Reels, or run an accessibility service. The usage alert is triggered when a manual count reaches the chosen threshold; Android notification permission is needed on Android 13+.
+GitHub Actions also builds a debug APK on every push to `main`. Open the **Actions** tab, choose the latest **Android APK Build** run, and download the `reel-counter-debug-apk` artifact after the run succeeds.
 
-Counts and settings stay in the app's local preferences. Clearing app data or uninstalling the app removes them.
+## First-run setup for automatic counter
+1. Open Reel Counter and grant **Display over other apps** when prompted (if the app offers it, otherwise open Android Settings → Apps → Special app access → Display over other apps → Reel Counter).
+2. Open Android Settings → Accessibility → Installed/Downloaded apps → **Reel Counter Auto Counter**, then enable it.
+3. Open Instagram or Facebook Lite. A small floating bubble should show the count for the current app.
+4. Disable the accessibility service in the same Settings page whenever you want to stop automatic counting.
 
-## Requirements
-- Android 8.0 (API 26) or newer
-- Android Studio with JDK 17
-- Android SDK Platform 35
+Names of Android settings vary by phone. On some Android versions, notification permission is also needed for usage-limit alerts.
+
+## Important accuracy limitation
+Instagram and Facebook Lite do not provide a public API/event that reliably announces “the next Reel started.” This app therefore uses Android accessibility **vertical scroll events** as a heuristic. It can count ordinary feed scrolls as well as Reels, and some Reel transitions may not produce a scroll event. It is an approximate counter, not a guaranteed exact Reel detector. The floating bubble is shown while Instagram or Facebook Lite is active, not exclusively on the Reel viewer. No screen text or account data is transmitted by this app.
+
+Counts are stored locally in app preferences. Clearing app data or uninstalling the app removes them.
