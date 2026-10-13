@@ -56,7 +56,7 @@ class ReelAccessibilityService : AccessibilityService() {
         renderCount(platform)
 
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && isVerticalScroll(event)) {
-            if (isLikelyReelsScreen(platform)) {
+            if (isLikelyReelsScreen()) {
                 val now = android.os.SystemClock.elapsedRealtime()
                 // Avoid duplicate accessibility scroll events for one swipe.
                 if (now - lastCountedScrollAt >= 650L) {
@@ -80,7 +80,7 @@ class ReelAccessibilityService : AccessibilityService() {
      * Reel/video indicators plus the usual action controls, instead of requiring
      * the exact word "Reels" which is often absent from the accessibility tree.
      */
-    private fun isLikelyReelsScreen(platform: String): Boolean {
+    private fun isLikelyReelsScreen(): Boolean {
         val root = rootInActiveWindow ?: return false
         val labels = ArrayList<String>(80)
         collectLabels(root, labels, 0)
@@ -94,14 +94,15 @@ class ReelAccessibilityService : AccessibilityService() {
                 it.contains("audio") || it.contains("remix") || it.contains("short video") ||
                 it.contains("video player") || it.contains("music")
         }
-        // Facebook Lite often omits Reel/audio labels from its accessibility tree.
-        // Keep the three Reel action controls as the minimum screen signature there.
-        // Instagram retains the stricter video-context check.
-        return if (platform == "Facebook Lite") {
-            hasLike && hasComment && hasShare
-        } else {
-            hasLike && hasComment && hasShare && hasVideoContext
+        // Like/Comment/Share also appear on normal feed posts, so they are never
+        // sufficient by themselves. Require explicit Reel/video context to avoid
+        // incrementing while the user scrolls Facebook Lite Home.
+        val hasExplicitVideoContext = normalized.any {
+            it.contains("reel") || it.contains("video") || it.contains("original audio") ||
+                it.contains("use audio") || it.contains("remix") || it.contains("full-screen") ||
+                it.contains("fullscreen") || it.contains("watching") || it.contains("audio")
         }
+        return hasLike && hasComment && hasShare && hasExplicitVideoContext
     }
 
     private fun collectLabels(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
