@@ -94,15 +94,19 @@ class ReelAccessibilityService : AccessibilityService() {
                 it.contains("audio") || it.contains("remix") || it.contains("short video") ||
                 it.contains("video player") || it.contains("music")
         }
-        // Like/Comment/Share also appear on normal feed posts, so they are never
-        // sufficient by themselves. Require explicit Reel/video context to avoid
-        // incrementing while the user scrolls Facebook Lite Home.
         val hasExplicitVideoContext = normalized.any {
             it.contains("reel") || it.contains("video") || it.contains("original audio") ||
                 it.contains("use audio") || it.contains("remix") || it.contains("full-screen") ||
                 it.contains("fullscreen") || it.contains("watching") || it.contains("audio")
         }
-        return hasLike && hasComment && hasShare && hasExplicitVideoContext
+
+        return if (platform == "Instagram") {
+            // Preserve Instagram's previous working rule unchanged.
+            hasLike && hasComment && hasShare && hasVideoContext
+        } else {
+            // Facebook Lite: don't count ordinary Home feed posts.
+            hasLike && hasComment && hasShare && hasExplicitVideoContext
+        }
     }
 
     private fun collectLabels(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
