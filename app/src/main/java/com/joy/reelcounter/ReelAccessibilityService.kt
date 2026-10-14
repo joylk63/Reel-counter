@@ -61,16 +61,17 @@ class ReelAccessibilityService : AccessibilityService() {
 
         val now = android.os.SystemClock.elapsedRealtime()
         if (activePlatform == "Facebook Lite") {
-            // Facebook Lite may expose Reel changes as content updates rather than
-            // scroll events. On its viewer screen, accept either signal.
-            val fbViewer = isFacebookLiteReelsViewer()
-            val fbSwipeSignal =
-                (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END) ||
-                (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && isVerticalScroll(event)) ||
-                (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
-            if (fbViewer && fbSwipeSignal && now - lastCountedScrollAt >= 900L) {
-                increment(activePlatform)
-                lastCountedScrollAt = now
+            // Track whether the Lite Reel viewer is visible; some builds expose no
+            // reliable scroll event for its pager, so accept one touch-end per swipe.
+            if (isFacebookLiteReelsViewer()) {
+                if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_END &&
+                    now - lastCountedScrollAt >= 900L) {
+                    increment(activePlatform)
+                    lastCountedScrollAt = now
+                }
+            } else if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+                isVerticalScroll(event) && isFacebookLiteFeedVideo()) {
+                // Home-feed video scrolls are intentionally not counted.
             }
         } else if (activePlatform == "Instagram" &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
@@ -142,6 +143,17 @@ class ReelAccessibilityService : AccessibilityService() {
         // Unlike Home feed posts, the Lite Reel viewer shown in testing exposes
         // a Full-screen control. Require that viewer-specific marker as well as actions.
         return hasLike && hasComment && hasShare && hasViewerControl
+    }
+
+    private fun isFacebookLiteFeedVideo(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val labels = ArrayList<String>(80)
+        collectLabels(root, labels, 0)
+        val normalized = labels.map { it.lowercase(Locale.ROOT).trim() }.filter { it.isNotBlank() }
+        return normalized.any { it.contains("like") } &&
+            normalized.any { it.contains("comment") } &&
+            normalized.any { it.contains("share") } &&
+            normalized.none { it.contains("full-screen") || it.contains("fullscreen") || it.contains("reel") }
     }
 
     private fun collectLabels(node: AccessibilityNodeInfo, out: MutableList<String>, depth: Int) {
