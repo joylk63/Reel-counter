@@ -106,23 +106,23 @@ class ReelAccessibilityService : AccessibilityService() {
         val hasLike = normalized.any { it == "like" || it.contains("like button") || it.contains("like reel") }
         val hasComment = normalized.any { it == "comment" || it.contains("comment button") || it.contains("comment on") }
         val hasShare = normalized.any { it == "share" || it.contains("share button") || it.contains("share reel") }
-        val hasVideoContext = normalized.any {
-            it.contains("reel") || it.contains("original audio") || it.contains("use audio") ||
-                it.contains("audio") || it.contains("remix") || it.contains("short video") ||
-                it.contains("video player") || it.contains("music")
+        val hasInstagramViewerMarker = normalized.any {
+            it == "reels" || it == "reel viewer" || it.contains("full-screen") ||
+                it.contains("fullscreen") || it.contains("video player") ||
+                it.contains("close reel") || it.contains("reels viewer")
         }
-        val hasExplicitVideoContext = normalized.any {
+        val hasFacebookVideoContext = normalized.any {
             it.contains("reel") || it.contains("video") || it.contains("original audio") ||
                 it.contains("use audio") || it.contains("remix") || it.contains("full-screen") ||
                 it.contains("fullscreen") || it.contains("watching") || it.contains("audio")
         }
 
         return if (platform == "Instagram") {
-            // Preserve Instagram's previous working rule unchanged.
-            hasLike && hasComment && hasShare && hasVideoContext
+            // Avoid treating Home-feed posts with music/audio labels as the Reels viewer.
+            hasLike && hasComment && hasShare && hasInstagramViewerMarker
         } else {
             // Facebook Lite: don't count ordinary Home feed posts.
-            hasLike && hasComment && hasShare && hasExplicitVideoContext
+            hasLike && hasComment && hasShare && hasFacebookVideoContext
         }
     }
 
